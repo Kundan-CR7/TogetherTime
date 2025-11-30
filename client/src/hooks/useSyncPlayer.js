@@ -22,10 +22,12 @@ export const useSyncPlayer = (videoRef, videoSrc) => {
             isRemoteUpdate.current = true;
 
             // Sync Play/Pause
+            let justStarted = false;
             if (state.playing !== !video.paused) {
                 if (state.playing) {
                     video.play().catch(e => console.error("Auto-play prevented", e));
                     setIsPlaying(true);
+                    justStarted = true;
                 } else {
                     video.pause();
                     setIsPlaying(false);
@@ -34,8 +36,11 @@ export const useSyncPlayer = (videoRef, videoSrc) => {
 
             // Sync Time (Drift Correction)
             const drift = Math.abs(video.currentTime - state.currentTime);
-            if (drift > DRIFT_THRESHOLD) {
-                console.log(`Drift detected: ${drift}s. Seeking to ${state.currentTime}`);
+            // Use tighter threshold if we just started playing to ensure initial sync
+            const currentThreshold = justStarted ? 0.05 : DRIFT_THRESHOLD;
+
+            if (drift > currentThreshold) {
+                console.log(`Drift detected: ${drift}s (Threshold: ${currentThreshold}s). Seeking to ${state.currentTime}`);
                 video.currentTime = state.currentTime;
             }
 
