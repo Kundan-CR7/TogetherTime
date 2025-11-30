@@ -12,8 +12,13 @@ const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
     cors: {
-        origin: process.env.CLIENT_URL || '*',
+        origin: [
+            "https://together-time-amber.vercel.app",
+            "http://localhost:5173",
+            process.env.CLIENT_URL
+        ].filter(Boolean),
         methods: ['GET', 'POST'],
+        credentials: true
     },
 });
 
