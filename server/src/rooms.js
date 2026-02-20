@@ -10,6 +10,7 @@ export const createRoom = async (roomId) => {
                     isPlaying: false,
                     currentTime: 0,
                     playbackRate: 1,
+                    videoUrl: null,
                 },
             });
             console.log(`Room created: ${roomId}`);
@@ -47,6 +48,7 @@ export const joinRoom = async (roomId, user) => {
                 playing: room.isPlaying,
                 currentTime: room.currentTime,
                 playbackRate: room.playbackRate,
+                videoUrl: room.videoUrl,
                 lastUpdated: room.lastUpdated.getTime(),
             },
         };
@@ -83,6 +85,7 @@ export const updatePlaybackState = async (roomId, state) => {
                 isPlaying: state.playing,
                 currentTime: state.currentTime,
                 playbackRate: state.playbackRate,
+                videoUrl: state.videoUrl,
                 lastUpdated: new Date(),
             },
         });
@@ -91,6 +94,7 @@ export const updatePlaybackState = async (roomId, state) => {
             playing: updatedRoom.isPlaying,
             currentTime: updatedRoom.currentTime,
             playbackRate: updatedRoom.playbackRate,
+            videoUrl: updatedRoom.videoUrl,
             lastUpdated: updatedRoom.lastUpdated.getTime(),
         };
     } catch (error) {

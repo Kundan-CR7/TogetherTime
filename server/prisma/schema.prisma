@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model Room {
@@ -16,6 +17,7 @@ model Room {
   isPlaying    Boolean  @default(false)
   currentTime  Float    @default(0)
   playbackRate Float    @default(1)
+  videoUrl     String?
   lastUpdated  DateTime @default(now())
 
   users       User[]

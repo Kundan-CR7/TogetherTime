@@ -64,7 +64,7 @@ io.on('connection', (socket) => {
 
     // Playback Sync
     socket.on('playback-update', async ({ roomId, state }) => {
-        // state: { playing, currentTime, playbackRate }
+        // state: { playing, currentTime, playbackRate, videoUrl }
         const updatedState = await updatePlaybackState(roomId, state);
         if (updatedState) {
             // Broadcast to everyone in the room EXCEPT the sender
@@ -73,6 +73,28 @@ io.on('connection', (socket) => {
                 senderId: socket.id, // Client can use this to ignore own updates if needed
             });
         }
+    });
+
+    socket.on('request-play', ({ roomId, currentTime }) => {
+        // Schedule play 1 second in the future
+        const playAt = Date.now() + 1000;
+        io.in(roomId).emit('play-at', { playAt, currentTime });
+
+        // Also update state to playing
+        updatePlaybackState(roomId, { playing: true, currentTime, playbackRate: 1 });
+    });
+
+    socket.on('change-video', async ({ roomId, videoUrl }) => {
+        const updatedState = await updatePlaybackState(roomId, {
+            playing: false,
+            currentTime: 0,
+            playbackRate: 1,
+            videoUrl
+        });
+        io.in(roomId).emit('playback-update', {
+            ...updatedState,
+            senderId: socket.id
+        });
     });
 
     // WebRTC Signaling
