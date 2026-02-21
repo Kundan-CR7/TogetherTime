@@ -11,6 +11,7 @@ export const RoomProvider = ({ children }) => {
     const [roomId, setRoomId] = useState(null);
     const [roomState, setRoomState] = useState({ users: {}, playbackState: {} });
     const [isConnected, setIsConnected] = useState(false);
+    const [hasVideo, setHasVideo] = useState(false);
 
     useEffect(() => {
         // Initialize user ID if not present
@@ -85,7 +86,9 @@ export const RoomProvider = ({ children }) => {
             isConnected,
             joinRoom,
             leaveRoom,
-            setRoomState // Exposed for playback updates
+            setRoomState, // Exposed for playback updates
+            hasVideo,
+            setHasVideo
         }}>
             {children}
         </RoomContext.Provider>

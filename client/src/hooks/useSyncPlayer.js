@@ -5,11 +5,15 @@ import { useRoom } from '../context/RoomContext';
 const DRIFT_THRESHOLD = 0.5; // seconds
 
 export const useSyncPlayer = (playerRef) => {
-    const { roomId, user } = useRoom();
+    const { roomId, user, setHasVideo } = useRoom();
     const [isPlaying, setIsPlaying] = useState(false);
     const [playbackRate, setPlaybackRate] = useState(1);
     const [videoUrl, setVideoUrl] = useState(null);
     const localFileUrlRef = useRef(null);
+
+    useEffect(() => {
+        setHasVideo(!!videoUrl);
+    }, [videoUrl, setHasVideo]);
 
     const isRemoteUpdate = useRef(false);
     const isStarting = useRef(false);

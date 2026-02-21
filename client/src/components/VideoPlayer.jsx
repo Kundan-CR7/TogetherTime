@@ -220,7 +220,7 @@ const VideoPlayer = () => {
     };
 
     return (
-        <div className="w-full max-w-4xl mx-auto bg-black rounded-lg overflow-hidden shadow-xl relative aspect-video flex items-center justify-center group">
+        <div className={`w-full h-full mx-auto bg-black rounded-lg overflow-hidden shadow-xl relative flex items-center justify-center group ${!videoUrl ? 'max-w-4xl aspect-video' : ''}`}>
             {!videoUrl ? (
                 <div className="text-center p-8 w-full max-w-md">
                     <div className="flex flex-col gap-6">
@@ -266,7 +266,7 @@ const VideoPlayer = () => {
                     </div>
                 </div>
             ) : (
-                <div className="w-full h-full relative group">
+                <div className="w-full h-full relative group overflow-hidden flex items-center justify-center">
                     {(videoUrl.includes('youtube.com') || videoUrl.includes('youtu.be')) ? (
                         <YouTubePlayer
                             url={videoUrl}

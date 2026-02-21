@@ -188,17 +188,17 @@ const CallWindow = () => {
     };
 
     return (
-        <div className="flex flex-col gap-4 p-4 bg-slate-900 rounded-lg h-full">
-            <div className="grid grid-cols-2 gap-2 flex-1 overflow-y-auto">
+        <div className="flex flex-col gap-4 p-4 bg-slate-900 rounded-lg h-full overflow-hidden">
+            <div className="flex flex-col gap-y-4 flex-1 overflow-y-auto overflow-x-hidden p-1">
                 {/* Local Video */}
-                <div className="relative aspect-video bg-slate-800 rounded-md overflow-hidden">
+                <div className="relative aspect-video bg-slate-800 rounded-md overflow-hidden shrink-0">
                     <video ref={localVideoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
                     <div className="absolute bottom-2 left-2 text-white text-xs bg-black/50 px-2 py-1 rounded">You</div>
                 </div>
 
                 {/* Remote Videos */}
                 {Object.entries(remoteStreams).map(([peerId, stream]) => (
-                    <div key={peerId} className="relative aspect-video bg-slate-800 rounded-md overflow-hidden">
+                    <div key={peerId} className="relative aspect-video bg-slate-800 rounded-md overflow-hidden shrink-0">
                         <VideoRenderer stream={stream} />
                         <div className="absolute bottom-2 left-2 text-white text-xs bg-black/50 px-2 py-1 rounded">
                             {roomState.users[peerId]?.name || 'User'}
