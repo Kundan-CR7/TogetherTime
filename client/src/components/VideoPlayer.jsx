@@ -1,28 +1,193 @@
 import { useRef, useState, useEffect } from 'react';
-import ReactPlayer from 'react-player';
 import { useSyncPlayer } from '../hooks/useSyncPlayer';
 import { Upload, Link as LinkIcon, Play } from 'lucide-react';
 import { socket } from '../services/signaling';
 import { useRoom } from '../context/RoomContext';
+
+const YouTubePlayer = ({ url, isPlaying, onPlay, onPause, playerRef }) => {
+    const containerRef = useRef(null);
+    const ytPlayerRef = useRef(null);
+    const onPlayRef = useRef(onPlay);
+    const onPauseRef = useRef(onPause);
+
+    useEffect(() => {
+        onPlayRef.current = onPlay;
+        onPauseRef.current = onPause;
+    }, [onPlay, onPause]);
+
+    const videoId = url.split('v=')[1]?.split('&')[0] || url.split('youtu.be/')[1];
+
+    useEffect(() => {
+        if (!videoId || !containerRef.current) return;
+
+        const loadYT = () => {
+            if (ytPlayerRef.current) return;
+
+            setTimeout(() => {
+                ytPlayerRef.current = new window.YT.Player(containerRef.current, {
+                    videoId,
+                    playerVars: { autoplay: 1, controls: 1, rel: 0 },
+                    events: {
+                        onReady: (e) => {
+                            if (playerRef) {
+                                playerRef.current = {
+                                    getCurrentTime: () => e.target.getCurrentTime(),
+                                    seekTo: (sec) => e.target.seekTo(sec, true),
+                                    play: () => e.target.playVideo(),
+                                    pause: () => e.target.pauseVideo()
+                                };
+                            }
+                            if (isPlaying) {
+                                isSyncingRef.current = true;
+                                e.target.playVideo();
+                                setTimeout(() => { isSyncingRef.current = false; }, 500);
+                            }
+                        },
+                        onStateChange: (e) => {
+                            if (e.data === window.YT.PlayerState.PLAYING) onPlayRef.current();
+                            if (e.data === window.YT.PlayerState.PAUSED) onPauseRef.current();
+                        }
+                    }
+                });
+            }, 100);
+        };
+
+        if (!window.YT) {
+            if (!document.querySelector('script[src="https://www.youtube.com/iframe_api"]')) {
+                const script = document.createElement('script');
+                script.src = "https://www.youtube.com/iframe_api";
+                document.head.appendChild(script);
+            }
+            const oldReady = window.onYouTubeIframeAPIReady;
+            window.onYouTubeIframeAPIReady = () => {
+                if (oldReady) oldReady();
+                loadYT();
+            };
+        } else if (!window.YT.Player) {
+            const oldReady = window.onYouTubeIframeAPIReady;
+            window.onYouTubeIframeAPIReady = () => {
+                if (oldReady) oldReady();
+                loadYT();
+            };
+        } else {
+            loadYT();
+        }
+
+        return () => {
+            if (ytPlayerRef.current && ytPlayerRef.current.destroy && ytPlayerRef.current.getIframe()) {
+                ytPlayerRef.current.destroy();
+                ytPlayerRef.current = null;
+            }
+        };
+    }, [videoId]);
+
+    useEffect(() => {
+        if (ytPlayerRef.current && ytPlayerRef.current.playVideo) {
+            if (isPlaying) ytPlayerRef.current.playVideo();
+            else ytPlayerRef.current.pauseVideo();
+        }
+    }, [isPlaying]);
+
+    // window.YT replaces the node, so we need a wrapper div so React doesn't crash on unmount.
+    return (
+        <div className="w-full h-full bg-black flex items-center justify-center">
+            <div ref={containerRef} className="w-full h-full" />
+        </div>
+    );
+};
+
+const NativeVideo = ({ url, isPlaying, onPlay, onPause, playerRef }) => {
+    const videoRef = useRef(null);
+
+    useEffect(() => {
+        if (playerRef) {
+            playerRef.current = {
+                getCurrentTime: () => videoRef.current?.currentTime || 0,
+                seekTo: (sec) => { if (videoRef.current) videoRef.current.currentTime = sec; },
+                play: () => videoRef.current?.play(),
+                pause: () => videoRef.current?.pause(),
+            };
+        }
+    }, [playerRef]);
+
+    useEffect(() => {
+        if (!videoRef.current) return;
+
+        videoRef.current.setAttribute("playsinline", "true");
+        videoRef.current.muted = false;
+
+        let isUnmounted = false;
+
+        const initCapture = () => {
+            try {
+                const captureStreamFunc = videoRef.current.captureStream || videoRef.current.mozCaptureStream;
+                if (!captureStreamFunc) return;
+
+                const capture = captureStreamFunc.call(videoRef.current);
+
+                const checkTracks = setInterval(() => {
+                    if (isUnmounted) {
+                        clearInterval(checkTracks);
+                        return;
+                    }
+
+                    const audioTracks = capture.getAudioTracks();
+                    const videoTracks = capture.getVideoTracks();
+
+                    if (audioTracks.length > 0 || videoTracks.length > 0) {
+                        if (audioTracks[0]) audioTracks[0].contentHint = "music";
+                        if (videoTracks[0]) videoTracks[0].contentHint = "detail";
+
+                        window.movieStream = capture;
+                        window.movieStreamReady = true;
+                        clearInterval(checkTracks);
+                    }
+                }, 100);
+            } catch (e) {
+                console.warn("Failed to set content hint on captureStream:", e);
+            }
+        };
+
+        // Delay slightly to allow video DOM to process the src blob
+        setTimeout(initCapture, 100);
+
+        return () => {
+            isUnmounted = true;
+        };
+    }, [url]);
+
+    useEffect(() => {
+        if (videoRef.current) {
+            if (isPlaying) {
+                videoRef.current.play().catch(e => console.error("Native play error:", e));
+            } else {
+                videoRef.current.pause();
+            }
+        }
+    }, [isPlaying]);
+
+    return (
+        <video
+            ref={videoRef}
+            src={url}
+            controls
+            className="w-full h-full object-contain"
+            onPlay={onPlay}
+            onPause={onPause}
+        />
+    );
+};
 
 const VideoPlayer = () => {
     const playerRef = useRef(null);
     const { roomId } = useRoom();
     const [inputUrl, setInputUrl] = useState('');
 
-    // We'll manage videoSrc via the hook/socket updates mostly, 
-    // but we need a local state to render the player initially if we pick a file.
-    // Actually, useSyncPlayer should probably return the current videoUrl from the room state.
-
     const {
         isPlaying,
-        playbackRate,
         videoUrl,
         emitState,
-        setLocalUrl,
-        handleDuration,
-        handleProgress,
-        handleReady
+        changeVideoUrl,
     } = useSyncPlayer(playerRef);
 
     const handleFileChange = (e) => {
@@ -30,36 +195,28 @@ const VideoPlayer = () => {
         if (file) {
             const url = URL.createObjectURL(file);
             console.log("VideoPlayer: File selected, generated URL:", url);
-            setLocalUrl(url);
-            socket.emit('change-video', { roomId, videoUrl: 'LOCAL_FILE' });
+            changeVideoUrl(url, true);
         }
     };
 
     const handleUrlSubmit = (e) => {
         e.preventDefault();
         if (inputUrl) {
-            socket.emit('change-video', { roomId, videoUrl: inputUrl });
+            changeVideoUrl(inputUrl, false);
             setInputUrl('');
         }
     };
 
-    // Wrapper for ReactPlayer callbacks
     const onPlay = () => {
-        console.log("VideoPlayer: onPlay triggered");
+        if (isPlaying) return; // Prevent loop: already playing locally
+        console.log("VideoPlayer: onPlay triggered globally!");
         emitState('play');
     };
+
     const onPause = () => {
-        console.log("VideoPlayer: onPause triggered");
+        if (!isPlaying) return; // Prevent loop: already paused locally
+        console.log("VideoPlayer: onPause triggered globally!");
         emitState('pause');
-    };
-    const onSeek = (seconds) => {
-        console.log("VideoPlayer: onSeek triggered", seconds);
-        emitState('seek', seconds);
-    };
-    const onPlaybackRateChange = (rate) => emitState('rate', rate);
-    const onReady = () => {
-        console.log("VideoPlayer: onReady triggered");
-        handleReady();
     };
 
     return (
@@ -110,45 +267,23 @@ const VideoPlayer = () => {
                 </div>
             ) : (
                 <div className="w-full h-full relative group">
-                    <ReactPlayer
-                        key={videoUrl}
-                        ref={playerRef}
-                        url={videoUrl}
-                        width="100%"
-                        height="100%"
-                        playing={isPlaying}
-                        playbackRate={playbackRate}
-                        controls={false} // Disable native controls
-                        onPlay={onPlay}
-                        onPause={onPause}
-                        onSeek={onSeek}
-                        onPlaybackRateChange={onPlaybackRateChange}
-                        onProgress={handleProgress}
-                        onDuration={handleDuration}
-                        onReady={onReady}
-                        config={{
-                            youtube: {
-                                playerVars: { showinfo: 1, controls: 0 }
-                            }
-                        }}
-                    />
-
-                    {/* Custom Controls Overlay */}
-                    <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
-                        <button
-                            onClick={isPlaying ? onPause : onPlay}
-                            className="bg-white/20 hover:bg-white/30 text-white p-3 rounded-full backdrop-blur-sm transition-all transform hover:scale-110"
-                        >
-                            {isPlaying ? (
-                                <div className="w-6 h-6 flex gap-1 justify-center items-center">
-                                    <div className="w-2 h-6 bg-white rounded-sm" />
-                                    <div className="w-2 h-6 bg-white rounded-sm" />
-                                </div>
-                            ) : (
-                                <Play size={24} fill="currentColor" />
-                            )}
-                        </button>
-                    </div>
+                    {(videoUrl.includes('youtube.com') || videoUrl.includes('youtu.be')) ? (
+                        <YouTubePlayer
+                            url={videoUrl}
+                            isPlaying={isPlaying}
+                            onPlay={onPlay}
+                            onPause={onPause}
+                            playerRef={playerRef}
+                        />
+                    ) : (
+                        <NativeVideo
+                            url={videoUrl}
+                            isPlaying={isPlaying}
+                            onPlay={onPlay}
+                            onPause={onPause}
+                            playerRef={playerRef}
+                        />
+                    )}
                 </div>
             )}
         </div>

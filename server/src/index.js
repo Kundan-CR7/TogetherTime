@@ -33,9 +33,9 @@ io.on('connection', (socket) => {
     console.log('User connected:', socket.id);
 
     // Room Management
-    socket.on('join-room', async ({ roomId, userName }) => {
+    socket.on('join-room', ({ roomId, userName }) => {
         socket.join(roomId);
-        const roomState = await joinRoom(roomId, { id: socket.id, name: userName });
+        const roomState = joinRoom(roomId, { id: socket.id, name: userName });
 
         if (roomState) {
             // Send current room state to the joining user
@@ -46,26 +46,26 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('leave-room', async ({ roomId }) => {
-        await leaveRoom(roomId, socket.id);
+    socket.on('leave-room', ({ roomId }) => {
+        leaveRoom(roomId, socket.id);
         socket.leave(roomId);
         socket.to(roomId).emit('user-left', socket.id);
     });
 
     socket.on('disconnecting', () => {
         const rooms = Array.from(socket.rooms);
-        rooms.forEach(async (roomId) => {
+        rooms.forEach((roomId) => {
             if (roomId !== socket.id) {
-                await leaveRoom(roomId, socket.id);
+                leaveRoom(roomId, socket.id);
                 socket.to(roomId).emit('user-left', socket.id);
             }
         });
     });
 
     // Playback Sync
-    socket.on('playback-update', async ({ roomId, state }) => {
+    socket.on('playback-update', ({ roomId, state }) => {
         // state: { playing, currentTime, playbackRate, videoUrl }
-        const updatedState = await updatePlaybackState(roomId, state);
+        const updatedState = updatePlaybackState(roomId, state);
         if (updatedState) {
             // Broadcast to everyone in the room EXCEPT the sender
             socket.to(roomId).emit('playback-update', {
@@ -75,17 +75,8 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('request-play', ({ roomId, currentTime }) => {
-        // Schedule play 1 second in the future
-        const playAt = Date.now() + 1000;
-        io.in(roomId).emit('play-at', { playAt, currentTime });
-
-        // Also update state to playing
-        updatePlaybackState(roomId, { playing: true, currentTime, playbackRate: 1 });
-    });
-
-    socket.on('change-video', async ({ roomId, videoUrl }) => {
-        const updatedState = await updatePlaybackState(roomId, {
+    socket.on('change-video', ({ roomId, videoUrl }) => {
+        const updatedState = updatePlaybackState(roomId, {
             playing: false,
             currentTime: 0,
             playbackRate: 1,

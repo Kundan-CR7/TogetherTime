@@ -3,14 +3,5 @@ services:
     name: togethertime-server
     env: node
     root: server
-    buildCommand: npm install && npx prisma generate
-    startCommand: npm start
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: DATABASE_URL
-        sync: false
-      - key: DIRECT_URL
-        sync: false
       - key: CLIENT_URL
         sync: false

@@ -12,6 +12,8 @@ export class PeerConnection {
         this.remoteUserId = remoteUserId;
         this.pc = new RTCPeerConnection(ICE_SERVERS);
         this.onTrack = onTrack;
+        this.candidatesQueue = [];
+        this.isRemoteDescriptionSet = false;
 
         this.pc.onicecandidate = (event) => {
             if (event.candidate) {
@@ -24,13 +26,40 @@ export class PeerConnection {
 
         this.pc.ontrack = (event) => {
             if (this.onTrack) {
-                this.onTrack(event.streams[0]);
+                this.onTrack(event.track, event.streams[0]);
             }
         };
     }
 
     addTrack(track, stream) {
         this.pc.addTrack(track, stream);
+
+        // Apply bitrate and priority encodings post-add depending on the track's contentHint
+        setTimeout(() => {
+            this.pc.getSenders().forEach(sender => {
+                if (!sender.track) return;
+
+                if (sender.track.contentHint === "detail") {
+                    const params = sender.getParameters();
+                    if (!params.encodings) params.encodings = [{}];
+
+                    params.encodings[0].maxBitrate = 8_000_000;
+                    params.encodings[0].priority = "high";
+
+                    sender.setParameters(params).catch(e => console.error("RTC Sender Params Error:", e));
+                }
+
+                if (sender.track.contentHint === "music") {
+                    const params = sender.getParameters();
+                    if (!params.encodings) params.encodings = [{}];
+
+                    params.encodings[0].maxBitrate = 512_000;
+                    params.encodings[0].priority = "high";
+
+                    sender.setParameters(params).catch(e => console.error("RTC Sender Params Error:", e));
+                }
+            });
+        }, 100);
     }
 
     async createOffer() {
@@ -43,19 +72,48 @@ export class PeerConnection {
     }
 
     async handleSignal(signal) {
-        if (signal.type === 'offer') {
-            await this.pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-            const answer = await this.pc.createAnswer();
-            await this.pc.setLocalDescription(answer);
-            socket.emit('signal', {
-                to: this.remoteUserId,
-                signal: { type: 'answer', sdp: answer },
-            });
-        } else if (signal.type === 'answer') {
-            await this.pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-        } else if (signal.type === 'candidate') {
-            await this.pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+        try {
+            if (signal.type === 'offer') {
+                if (this.pc.signalingState !== 'stable') {
+                    // If we get an offer but we're not stable, we might be in a race.
+                    // For a simple app, we can ignore or rollback, but let's just proceed carefully.
+                    console.warn('Received offer when not stable:', this.pc.signalingState);
+                }
+                await this.pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+                this.isRemoteDescriptionSet = true;
+                this.processQueue();
+                const answer = await this.pc.createAnswer();
+                await this.pc.setLocalDescription(answer);
+                socket.emit('signal', {
+                    to: this.remoteUserId,
+                    signal: { type: 'answer', sdp: answer },
+                });
+            } else if (signal.type === 'answer') {
+                if (this.pc.signalingState === 'have-local-offer') {
+                    await this.pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+                    this.isRemoteDescriptionSet = true;
+                    this.processQueue();
+                } else {
+                    console.warn('Received answer but signaling state is', this.pc.signalingState);
+                }
+            } else if (signal.type === 'candidate') {
+                const candidate = new RTCIceCandidate(signal.candidate);
+                if (this.isRemoteDescriptionSet) {
+                    await this.pc.addIceCandidate(candidate).catch(e => console.error('Error adding ICE candidate:', e));
+                } else {
+                    this.candidatesQueue.push(candidate);
+                }
+            }
+        } catch (error) {
+            console.error('Error handling signal:', error);
         }
+    }
+
+    async processQueue() {
+        for (const candidate of this.candidatesQueue) {
+            await this.pc.addIceCandidate(candidate).catch(e => console.error(e));
+        }
+        this.candidatesQueue = [];
     }
 
     close() {

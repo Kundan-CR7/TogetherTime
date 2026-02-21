@@ -1,104 +1,78 @@
-import prisma from './utils/prisma.js';
+// In-memory store for rooms and users
+const rooms = new Map();
 
-export const createRoom = async (roomId) => {
-    try {
-        const existingRoom = await prisma.room.findUnique({ where: { id: roomId } });
-        if (!existingRoom) {
-            await prisma.room.create({
-                data: {
-                    id: roomId,
-                    isPlaying: false,
-                    currentTime: 0,
-                    playbackRate: 1,
-                    videoUrl: null,
-                },
-            });
-            console.log(`Room created: ${roomId}`);
-        }
-    } catch (error) {
-        console.error('Error creating room:', error);
+export const createRoom = (roomId) => {
+    if (!rooms.has(roomId)) {
+        rooms.set(roomId, {
+            id: roomId,
+            isPlaying: false,
+            currentTime: 0,
+            playbackRate: 1,
+            videoUrl: null,
+            lastUpdated: Date.now(),
+            users: {} // Map of userId -> userObj
+        });
+        console.log(`Room created: ${roomId}`);
     }
 };
 
-export const joinRoom = async (roomId, user) => {
-    try {
-        await createRoom(roomId); // Ensure room exists
+export const joinRoom = (roomId, user) => {
+    createRoom(roomId); // Ensure room exists
 
-        // Upsert user (update if exists, create if not)
-        const dbUser = await prisma.user.upsert({
-            where: { id: user.id },
-            update: { name: user.name, roomId },
-            create: {
-                id: user.id,
-                name: user.name,
-                roomId,
-            },
-        });
+    const room = rooms.get(roomId);
 
-        console.log(`User ${user.id} joined room ${roomId}`);
+    // Upsert user
+    room.users[user.id] = {
+        id: user.id,
+        name: user.name,
+        roomId,
+        joinedAt: Date.now()
+    };
 
-        const room = await prisma.room.findUnique({
-            where: { id: roomId },
-            include: { users: true },
-        });
+    console.log(`User ${user.id} (${user.name}) joined room ${roomId}`);
 
-        return {
-            users: room.users.reduce((acc, u) => ({ ...acc, [u.id]: u }), {}),
-            playbackState: {
-                playing: room.isPlaying,
-                currentTime: room.currentTime,
-                playbackRate: room.playbackRate,
-                videoUrl: room.videoUrl,
-                lastUpdated: room.lastUpdated.getTime(),
-            },
-        };
-    } catch (error) {
-        console.error('Error joining room:', error);
-        return null;
-    }
+    return {
+        users: room.users,
+        playbackState: {
+            playing: room.isPlaying,
+            currentTime: room.currentTime,
+            playbackRate: room.playbackRate,
+            videoUrl: room.videoUrl,
+            lastUpdated: room.lastUpdated,
+        },
+    };
 };
 
-export const leaveRoom = async (roomId, userId) => {
-    try {
-        await prisma.user.delete({ where: { id: userId } });
+export const leaveRoom = (roomId, userId) => {
+    const room = rooms.get(roomId);
+    if (!room) return;
+
+    if (room.users[userId]) {
         console.log(`User ${userId} left room ${roomId}`);
+        delete room.users[userId];
+    }
 
-        const room = await prisma.room.findUnique({
-            where: { id: roomId },
-            include: { users: true },
-        });
-
-        if (room && room.users.length === 0) {
-            await prisma.room.delete({ where: { id: roomId } });
-            console.log(`Room deleted: ${roomId}`);
-        }
-    } catch (error) {
-        console.error('Error leaving room:', error);
+    if (Object.keys(room.users).length === 0) {
+        rooms.delete(roomId);
+        console.log(`Room deleted: ${roomId}`);
     }
 };
 
-export const updatePlaybackState = async (roomId, state) => {
-    try {
-        const updatedRoom = await prisma.room.update({
-            where: { id: roomId },
-            data: {
-                isPlaying: state.playing,
-                currentTime: state.currentTime,
-                playbackRate: state.playbackRate,
-                videoUrl: state.videoUrl,
-                lastUpdated: new Date(),
-            },
-        });
+export const updatePlaybackState = (roomId, state) => {
+    const room = rooms.get(roomId);
+    if (!room) return null;
 
-        return {
-            playing: updatedRoom.isPlaying,
-            currentTime: updatedRoom.currentTime,
-            playbackRate: updatedRoom.playbackRate,
-            videoUrl: updatedRoom.videoUrl,
-            lastUpdated: updatedRoom.lastUpdated.getTime(),
-        };
-    } catch (error) {
-        console.error('Error updating playback state:', error);
-        return null;
-    }
+    room.isPlaying = state.playing !== undefined ? state.playing : room.isPlaying;
+    room.currentTime = state.currentTime !== undefined ? state.currentTime : room.currentTime;
+    room.playbackRate = state.playbackRate !== undefined ? state.playbackRate : room.playbackRate;
+    room.videoUrl = state.videoUrl !== undefined ? state.videoUrl : room.videoUrl;
+    room.lastUpdated = Date.now();
+
+    return {
+        playing: room.isPlaying,
+        currentTime: room.currentTime,
+        playbackRate: room.playbackRate,
+        videoUrl: room.videoUrl,
+        lastUpdated: room.lastUpdated,
+    };
 };

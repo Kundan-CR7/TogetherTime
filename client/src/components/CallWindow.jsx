@@ -16,11 +16,26 @@ const CallWindow = () => {
     useEffect(() => {
         const initMedia = async () => {
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: true,
+                    audio: {
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        autoGainControl: false,
+                        googAutoGainControl: false,       // Chrome specific
+                        googNoiseSuppression: false,      // Chrome specific
+                        googHighpassFilter: false,        // Chrome specific
+                        googAudioMirroring: false,        // Chrome specific
+                        googNoiseReduction: false         // Chrome specific
+                    }
+                });
                 setLocalStream(stream);
                 if (localVideoRef.current) {
                     localVideoRef.current.srcObject = stream;
                 }
+
+                // Once we have our local stream ready, notify others in the room
+                socket.emit('join-call', { roomId: user.roomId || window.location.pathname.split('/').pop() }); // Get roomId from URL if not in context
             } catch (err) {
                 console.error('Error accessing media devices:', err);
             }
@@ -39,17 +54,45 @@ const CallWindow = () => {
     useEffect(() => {
         if (!localStream) return;
 
-        // Handle new users joining
-        const handleUserJoined = (newUser) => {
-            if (newUser.id === user.id) return;
-            console.log('Initiating call to', newUser.id);
-            const peer = new PeerConnection(newUser.id, (stream) => {
-                setRemoteStreams(prev => ({ ...prev, [newUser.id]: stream }));
+        // Handle new users completing their media setup
+        const handleUserConnected = async (newUserId) => {
+            if (newUserId === user.id) return;
+            console.log('Initiating call to', newUserId);
+            const peer = new PeerConnection(newUserId, (track, stream) => {
+                console.log('Received track from new user', newUserId, 'Track:', track.kind, 'Stream ID:', stream.id, 'Tracks in Stream:', stream.getTracks().length);
+                setRemoteStreams(prev => {
+                    if (prev[newUserId] && prev[newUserId].id !== stream.id) {
+                        return prev; // Ignore secondary streams (like the explicit movie stream) so they don't overwrite the webcam UI
+                    }
+                    return { ...prev, [newUserId]: stream };
+                });
             });
 
             localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
+
+            const waitForMovie = async () => {
+                while (!window.movieStreamReady) {
+                    await new Promise(r => setTimeout(r, 100));
+                }
+            };
+            await waitForMovie();
+
+            if (window.movieStreamReady && window.movieStream) {
+                window.movieStream.getTracks().forEach(track => {
+                    peer.addTrack(track, window.movieStream);
+                });
+            }
+
             peer.createOffer();
-            peersRef.current[newUser.id] = peer;
+
+            console.table(
+                peer.pc.getSenders().map(s => ({
+                    kind: s.track?.kind,
+                    hint: s.track?.contentHint
+                }))
+            );
+
+            peersRef.current[newUserId] = peer;
         };
 
         // Handle signals
@@ -57,11 +100,40 @@ const CallWindow = () => {
             let peer = peersRef.current[from];
             if (!peer) {
                 console.log('Receiving call from', from);
-                peer = new PeerConnection(from, (stream) => {
-                    setRemoteStreams(prev => ({ ...prev, [from]: stream }));
+                peer = new PeerConnection(from, (track, stream) => {
+                    console.log('Received track from signaling user', from, 'Track:', track.kind, 'Stream ID:', stream.id, 'Tracks in Stream:', stream.getTracks().length);
+                    setRemoteStreams(prev => {
+                        if (prev[from] && prev[from].id !== stream.id) {
+                            return prev;
+                        }
+                        return { ...prev, [from]: stream };
+                    });
                 });
                 localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
+
+                const waitForMovie = async () => {
+                    while (!window.movieStreamReady) {
+                        await new Promise(r => setTimeout(r, 100));
+                    }
+                };
+                await waitForMovie();
+
+                if (window.movieStreamReady && window.movieStream) {
+                    window.movieStream.getTracks().forEach(track => {
+                        peer.addTrack(track, window.movieStream);
+                    });
+                }
+
                 peersRef.current[from] = peer;
+
+                setTimeout(() => {
+                    console.table(
+                        peer.pc.getSenders().map(s => ({
+                            kind: s.track?.kind,
+                            hint: s.track?.contentHint
+                        }))
+                    );
+                }, 100);
             }
             await peer.handleSignal(signal);
         };
@@ -79,7 +151,7 @@ const CallWindow = () => {
             }
         };
 
-        socket.on('user-joined', handleUserJoined);
+        socket.on('user-connected', handleUserConnected);
         socket.on('signal', handleSignal);
         socket.on('user-left', handleUserLeft);
 
@@ -95,7 +167,7 @@ const CallWindow = () => {
         // So I just need to handle incoming signals.
 
         return () => {
-            socket.off('user-joined', handleUserJoined);
+            socket.off('user-connected', handleUserConnected);
             socket.off('signal', handleSignal);
             socket.off('user-left', handleUserLeft);
         };
@@ -154,6 +226,7 @@ const VideoRenderer = ({ stream }) => {
     useEffect(() => {
         if (videoRef.current && stream) {
             videoRef.current.srcObject = stream;
+            videoRef.current.play().catch(err => console.error("VideoRenderer Autoplay Error:", err));
         }
     }, [stream]);
 

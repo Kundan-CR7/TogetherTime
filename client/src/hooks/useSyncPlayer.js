@@ -145,22 +145,8 @@ export const useSyncPlayer = (playerRef) => {
         const player = playerRef.current;
         const currentTime = player.getCurrentTime ? player.getCurrentTime() : (player.currentTime || 0);
 
-        // For Play, we use request-play to schedule it
-        if (type === 'play') {
-            console.log("useSyncPlayer: Emitting request-play");
-            isStarting.current = true; // Set starting flag
-            socket.emit('request-play', { roomId, currentTime });
-            return;
-        }
-
-        // Ignore pause events if we are in the middle of starting (e.g. from seek/buffer)
-        if (type === 'pause' && isStarting.current) {
-            console.log("useSyncPlayer: Ignoring pause during start sequence");
-            return;
-        }
-
         const state = {
-            playing: type === 'pause' ? false : isPlaying,
+            playing: type === 'pause' ? false : (type === 'play' ? true : isPlaying),
             currentTime: type === 'seek' ? value : currentTime,
             playbackRate: type === 'rate' ? value : playbackRate,
             videoUrl: localFileUrlRef.current ? 'LOCAL_FILE' : videoUrl,
@@ -168,14 +154,26 @@ export const useSyncPlayer = (playerRef) => {
         };
 
         if (type === 'pause') setIsPlaying(false);
+        if (type === 'play') setIsPlaying(true);
         if (type === 'rate') setPlaybackRate(value);
 
         socket.emit('playback-update', { roomId, state });
     };
 
-    const setLocalUrl = (url) => {
-        localFileUrlRef.current = url;
-        setVideoUrl(url);
+    const changeVideoUrl = (url, isLocal = false) => {
+        if (isLocal) {
+            localFileUrlRef.current = url;
+            setVideoUrl(url);
+            socket.emit('change-video', { roomId, videoUrl: 'LOCAL_FILE' });
+        } else {
+            localFileUrlRef.current = null;
+            setVideoUrl(url);
+            socket.emit('change-video', { roomId, videoUrl: url });
+        }
+        setIsPlaying(false);
+        if (playerRef.current && playerRef.current.seekTo) {
+            playerRef.current.seekTo(0);
+        }
     };
 
     return {
@@ -183,7 +181,7 @@ export const useSyncPlayer = (playerRef) => {
         playbackRate,
         videoUrl,
         emitState,
-        setLocalUrl,
+        changeVideoUrl,
         handleDuration: (duration) => { /* Optional */ },
         handleProgress: (state) => { /* Optional */ },
         handleReady: () => { /* Optional */ }
