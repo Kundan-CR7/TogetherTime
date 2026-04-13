@@ -20,6 +20,12 @@ const io = new Server(httpServer, {
         methods: ['GET', 'POST'],
         credentials: true
     },
+    // Allow both transports for cross-platform reliability
+    // Windows clients behind firewalls may need polling fallback
+    transports: ['websocket', 'polling'],
+    // Faster dead connection detection
+    pingTimeout: 30000,
+    pingInterval: 10000,
 });
 
 app.use(cors());
