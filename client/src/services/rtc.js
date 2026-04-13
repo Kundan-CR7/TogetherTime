@@ -34,38 +34,22 @@ export class PeerConnection {
     addTrack(track, stream) {
         const sender = this.pc.addTrack(track, stream);
 
-        // Apply bitrate and priority encodings to the specific sender just added.
-        // Movie tracks have contentHint set ("detail" for video, "music" for audio).
-        // Webcam tracks have no contentHint — deprioritize them so movie quality stays high.
+        // Apply encoding parameters for webcam tracks.
+        // Only webcam tracks are sent through WebRTC now (movie plays locally on both sides).
         setTimeout(() => {
             if (!sender.track) return;
 
             const params = sender.getParameters();
             if (!params.encodings) params.encodings = [{}];
 
-            const hint = sender.track.contentHint;
-            const kind = sender.track.kind;
-
-            if (hint === "detail") {
-                // Movie video — high quality, high priority
-                params.encodings[0].maxBitrate = 8_000_000;
-                params.encodings[0].priority = "high";
-                params.encodings[0].networkPriority = "high";
-            } else if (hint === "music") {
-                // Movie audio — high quality, high priority
-                params.encodings[0].maxBitrate = 512_000;
-                params.encodings[0].priority = "high";
-                params.encodings[0].networkPriority = "high";
-            } else if (kind === "audio") {
-                // Webcam mic — just voice chat, deprioritize heavily
-                params.encodings[0].maxBitrate = 32_000;
-                params.encodings[0].priority = "low";
-                params.encodings[0].networkPriority = "low";
-            } else if (kind === "video") {
-                // Webcam face cam — small thumbnail, deprioritize
-                params.encodings[0].maxBitrate = 500_000;
-                params.encodings[0].priority = "low";
-                params.encodings[0].networkPriority = "low";
+            if (sender.track.kind === "audio") {
+                // Webcam mic — voice chat quality
+                params.encodings[0].maxBitrate = 64_000;
+                params.encodings[0].priority = "medium";
+            } else if (sender.track.kind === "video") {
+                // Webcam face cam
+                params.encodings[0].maxBitrate = 1_000_000;
+                params.encodings[0].priority = "medium";
             }
 
             sender.setParameters(params).catch(e => console.error("RTC Sender Params Error:", e));

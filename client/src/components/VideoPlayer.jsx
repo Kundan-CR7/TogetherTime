@@ -115,45 +115,6 @@ const NativeVideo = ({ url, isPlaying, onPlay, onPause, playerRef }) => {
 
         videoRef.current.setAttribute("playsinline", "true");
         videoRef.current.muted = false;
-
-        let isUnmounted = false;
-
-        const initCapture = () => {
-            try {
-                const captureStreamFunc = videoRef.current.captureStream || videoRef.current.mozCaptureStream;
-                if (!captureStreamFunc) return;
-
-                const capture = captureStreamFunc.call(videoRef.current);
-
-                const checkTracks = setInterval(() => {
-                    if (isUnmounted) {
-                        clearInterval(checkTracks);
-                        return;
-                    }
-
-                    const audioTracks = capture.getAudioTracks();
-                    const videoTracks = capture.getVideoTracks();
-
-                    if (audioTracks.length > 0 || videoTracks.length > 0) {
-                        if (audioTracks[0]) audioTracks[0].contentHint = "music";
-                        if (videoTracks[0]) videoTracks[0].contentHint = "detail";
-
-                        window.movieStream = capture;
-                        window.movieStreamReady = true;
-                        clearInterval(checkTracks);
-                    }
-                }, 100);
-            } catch (e) {
-                console.warn("Failed to set content hint on captureStream:", e);
-            }
-        };
-
-        // Delay slightly to allow video DOM to process the src blob
-        setTimeout(initCapture, 100);
-
-        return () => {
-            isUnmounted = true;
-        };
     }, [url]);
 
     useEffect(() => {

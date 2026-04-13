@@ -91,27 +91,6 @@ const CallWindow = () => {
 
             localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
 
-            // Movie stream adding - don't await and block the offer
-            if (window.movieStreamReady && window.movieStream) {
-                 window.movieStream.getTracks().forEach(track => {
-                     peer.addTrack(track, window.movieStream);
-                 });
-            } else {
-                 // Check periodically in background
-                 const checkInterval = setInterval(() => {
-                     if (window.movieStreamReady && window.movieStream && peersRef.current[newUserId]) {
-                         window.movieStream.getTracks().forEach(track => {
-                             peersRef.current[newUserId].addTrack(track, window.movieStream);
-                         });
-                         peersRef.current[newUserId].createOffer(); // Renegotiate
-                         clearInterval(checkInterval);
-                     }
-                 }, 1000);
-                 
-                 // Clear after 10s if never happens to avoid memory leak
-                 setTimeout(() => clearInterval(checkInterval), 10000);
-            }
-
             peer.createOffer();
             peersRef.current[newUserId] = peer;
         };
@@ -134,12 +113,6 @@ const CallWindow = () => {
                 });
                 
                 localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
-
-                if (window.movieStreamReady && window.movieStream) {
-                    window.movieStream.getTracks().forEach(track => {
-                        peer.addTrack(track, window.movieStream);
-                    });
-                }
                 
                 peersRef.current[from] = peer;
             }
