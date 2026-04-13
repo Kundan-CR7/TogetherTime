@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useRoom } from '../context/RoomContext';
 import { socket } from '../services/signaling';
 import { PeerConnection } from '../services/rtc';
-import { Mic, MicOff, Video, VideoOff } from 'lucide-react';
+import { Video, VideoOff } from 'lucide-react';
 
 const CallWindow = () => {
     const { user, roomState, roomId } = useRoom();
@@ -10,7 +10,6 @@ const CallWindow = () => {
     const [remoteStreams, setRemoteStreams] = useState({});
     const peersRef = useRef({});
     const localVideoRef = useRef(null);
-    const [isMuted, setIsMuted] = useState(false);
     const [isVideoOff, setIsVideoOff] = useState(false);
 
     // Track when user is fully joined
@@ -18,13 +17,10 @@ const CallWindow = () => {
 
     const initMedia = useCallback(async () => {
         try {
+            // Only request video — no audio so it doesn't interfere with movie sound
             const stream = await navigator.mediaDevices.getUserMedia({
                 video: true,
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true
-                }
+                audio: false
             });
             
             setLocalStream(stream);
@@ -153,12 +149,7 @@ const CallWindow = () => {
         }
     }, []);
 
-    const toggleMute = () => {
-        if (localStream) {
-            localStream.getAudioTracks().forEach(track => track.enabled = !track.enabled);
-            setIsMuted(!isMuted);
-        }
-    };
+
 
     const toggleVideo = () => {
         if (localStream) {
@@ -189,9 +180,6 @@ const CallWindow = () => {
 
             {/* Controls */}
             <div className="flex justify-center gap-4 py-2">
-                <button onClick={toggleMute} className={`p-3 rounded-full ${isMuted ? 'bg-red-500' : 'bg-slate-700 hover:bg-slate-600'} text-white transition-colors`}>
-                    {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
-                </button>
                 <button onClick={toggleVideo} className={`p-3 rounded-full ${isVideoOff ? 'bg-red-500' : 'bg-slate-700 hover:bg-slate-600'} text-white transition-colors`}>
                     {isVideoOff ? <VideoOff size={20} /> : <Video size={20} />}
                 </button>
@@ -206,26 +194,16 @@ const VideoRenderer = ({ stream }) => {
     useEffect(() => {
         if (videoRef.current && stream) {
             videoRef.current.srcObject = stream;
-            // Ensure audio is not muted for remote streams
-            videoRef.current.muted = false;
-            videoRef.current.volume = 1.0;
+            // Mute remote streams so they don't interfere with the movie audio
+            videoRef.current.muted = true;
+            videoRef.current.volume = 0;
             videoRef.current.play().catch(err => {
                 console.error("VideoRenderer Autoplay Error:", err);
-                // If autoplay with audio fails due to browser policy, try muted first then unmute
-                if (videoRef.current) {
-                    videoRef.current.muted = true;
-                    videoRef.current.play().then(() => {
-                        // Unmute after playback starts (user interaction may be needed)
-                        setTimeout(() => {
-                            if (videoRef.current) videoRef.current.muted = false;
-                        }, 100);
-                    }).catch(e => console.error("VideoRenderer fallback play error:", e));
-                }
             });
         }
     }, [stream]);
 
-    return <video ref={videoRef} autoPlay playsInline muted={false} className="w-full h-full object-cover" />;
+    return <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />;
 };
 
 export default CallWindow;

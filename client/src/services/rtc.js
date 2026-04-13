@@ -34,23 +34,17 @@ export class PeerConnection {
     addTrack(track, stream) {
         const sender = this.pc.addTrack(track, stream);
 
-        // Apply encoding parameters for webcam tracks.
-        // Only webcam tracks are sent through WebRTC now (movie plays locally on both sides).
+        // Apply encoding parameters for webcam video tracks.
+        // Only video tracks are sent (no audio to avoid interfering with movie sound).
         setTimeout(() => {
-            if (!sender.track) return;
+            if (!sender.track || sender.track.kind !== "video") return;
 
             const params = sender.getParameters();
             if (!params.encodings) params.encodings = [{}];
 
-            if (sender.track.kind === "audio") {
-                // Webcam mic — voice chat quality
-                params.encodings[0].maxBitrate = 64_000;
-                params.encodings[0].priority = "medium";
-            } else if (sender.track.kind === "video") {
-                // Webcam face cam
-                params.encodings[0].maxBitrate = 1_000_000;
-                params.encodings[0].priority = "medium";
-            }
+            // Webcam face cam — keep bandwidth reasonable
+            params.encodings[0].maxBitrate = 1_000_000;
+            params.encodings[0].priority = "medium";
 
             sender.setParameters(params).catch(e => console.error("RTC Sender Params Error:", e));
         }, 100);
