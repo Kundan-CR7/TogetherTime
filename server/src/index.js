@@ -35,6 +35,7 @@ io.on('connection', (socket) => {
     // Room Management
     socket.on('join-room', ({ roomId, userName }) => {
         socket.join(roomId);
+        // Use socket.id explicitly as the user ID for signaling consistency
         const roomState = joinRoom(roomId, { id: socket.id, name: userName });
 
         if (roomState) {

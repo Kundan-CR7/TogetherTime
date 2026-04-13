@@ -18,6 +18,8 @@ export const RoomProvider = ({ children }) => {
         const storedUserId = localStorage.getItem('userId');
         const storedUserName = localStorage.getItem('userName');
 
+        // We initially set a UUID or stored ID, but this will be overridden
+        // by the actual socket.id when connecting to the room for WebRTC signaling consistency.
         if (storedUserId) {
             setUser({ id: storedUserId, name: storedUserName || 'Guest' });
         } else {
@@ -27,7 +29,17 @@ export const RoomProvider = ({ children }) => {
         }
 
         // Socket listeners
-        socket.on('connect', () => setIsConnected(true));
+        socket.on('connect', () => {
+            setIsConnected(true);
+            // Crucial fix: The user ID must match the socket ID for WebRTC signaling to work correctly
+            setUser(prev => ({ ...prev, id: socket.id }));
+            
+            // Re-join room if disconnected
+            if (roomId && user.name) {
+                 socket.emit('join-room', { roomId, userName: user.name });
+            }
+        });
+        
         socket.on('disconnect', () => setIsConnected(false));
 
         socket.on('room-state', (state) => {
@@ -56,7 +68,7 @@ export const RoomProvider = ({ children }) => {
             socket.off('user-joined');
             socket.off('user-left');
         };
-    }, []);
+    }, [roomId, user.name]); // Added dependencies to re-join properly
 
     const joinRoom = useCallback((id, name) => {
         connectSocket();
@@ -66,7 +78,12 @@ export const RoomProvider = ({ children }) => {
             localStorage.setItem('userName', name);
             return updated;
         });
-        socket.emit('join-room', { roomId: id, userName: name });
+        // We only emit join-room immediately if socket is already connected.
+        // Otherwise, the 'connect' listener will handle it once the connection establishes.
+        if (socket.connected) {
+             setUser(prev => ({ ...prev, id: socket.id }));
+             socket.emit('join-room', { roomId: id, userName: name });
+        }
     }, []);
 
     const leaveRoom = useCallback(() => {

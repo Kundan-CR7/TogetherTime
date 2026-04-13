@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useRoom } from '../context/RoomContext';
 import { socket } from '../services/signaling';
 import { PeerConnection } from '../services/rtc';
 import { Mic, MicOff, Video, VideoOff } from 'lucide-react';
 
 const CallWindow = () => {
-    const { user, roomState } = useRoom();
+    const { user, roomState, roomId } = useRoom();
     const [localStream, setLocalStream] = useState(null);
     const [remoteStreams, setRemoteStreams] = useState({});
     const peersRef = useRef({});
@@ -13,56 +13,77 @@ const CallWindow = () => {
     const [isMuted, setIsMuted] = useState(false);
     const [isVideoOff, setIsVideoOff] = useState(false);
 
-    useEffect(() => {
-        const initMedia = async () => {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: true,
-                    audio: {
-                        echoCancellation: false,
-                        noiseSuppression: false,
-                        autoGainControl: false,
-                        googAutoGainControl: false,       // Chrome specific
-                        googNoiseSuppression: false,      // Chrome specific
-                        googHighpassFilter: false,        // Chrome specific
-                        googAudioMirroring: false,        // Chrome specific
-                        googNoiseReduction: false         // Chrome specific
-                    }
-                });
-                setLocalStream(stream);
-                if (localVideoRef.current) {
-                    localVideoRef.current.srcObject = stream;
+    // Track when user is fully joined
+    const [isJoined, setIsJoined] = useState(false);
+
+    const initMedia = useCallback(async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: true,
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
                 }
-
-                // Once we have our local stream ready, notify others in the room
-                socket.emit('join-call', { roomId: user.roomId || window.location.pathname.split('/').pop() }); // Get roomId from URL if not in context
-            } catch (err) {
-                console.error('Error accessing media devices:', err);
+            });
+            
+            setLocalStream(stream);
+            if (localVideoRef.current) {
+                localVideoRef.current.srcObject = stream;
             }
-        };
 
-        initMedia();
-
-        return () => {
-            if (localStream) {
-                localStream.getTracks().forEach(track => track.stop());
-            }
-            Object.values(peersRef.current).forEach(peer => peer.close());
-        };
+            return stream;
+        } catch (err) {
+            console.error('Error accessing media devices:', err);
+            return null;
+        }
     }, []);
 
     useEffect(() => {
-        if (!localStream) return;
+        let stream = null;
+        
+        const setup = async () => {
+             stream = await initMedia();
+             if (user.id && user.id === socket.id && stream) {
+                 setIsJoined(true);
+                 socket.emit('join-call', { roomId: roomId || window.location.pathname.split('/').pop() });
+             }
+        };
 
-        // Handle new users completing their media setup
+        if (user.id && user.id === socket.id && !isJoined) {
+            setup();
+        }
+
+        return () => {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+            // Cannot clean up peersRef.current here cleanly without breaking HMR or reconnections
+        };
+    }, [user.id, initMedia]);
+
+    useEffect(() => {
+        if (!isJoined || !localStream || !user.id || user.id !== socket.id) return;
+
+        console.log("Setting up socket listeners for WebRTC...");
+
         const handleUserConnected = async (newUserId) => {
             if (newUserId === user.id) return;
             console.log('Initiating call to', newUserId);
+            
+            if (peersRef.current[newUserId]) {
+                peersRef.current[newUserId].close();
+            }
+
             const peer = new PeerConnection(newUserId, (track, stream) => {
-                console.log('Received track from new user', newUserId, 'Track:', track.kind, 'Stream ID:', stream.id, 'Tracks in Stream:', stream.getTracks().length);
+                console.log('Received track from new user', newUserId, 'Track:', track.kind, 'Stream ID:', stream.id);
                 setRemoteStreams(prev => {
-                    if (prev[newUserId] && prev[newUserId].id !== stream.id) {
-                        return prev; // Ignore secondary streams (like the explicit movie stream) so they don't overwrite the webcam UI
+                    const existing = prev[newUserId];
+                    // If we already have a stream for this user, only update if same stream ID
+                    // (handles ontrack firing separately for audio and video of the same webcam stream).
+                    // If a different stream ID arrives (movie stream), skip it.
+                    if (existing && existing.id !== stream.id) {
+                        return prev;
                     }
                     return { ...prev, [newUserId]: stream };
                 });
@@ -70,75 +91,64 @@ const CallWindow = () => {
 
             localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
 
-            const waitForMovie = async () => {
-                while (!window.movieStreamReady) {
-                    await new Promise(r => setTimeout(r, 100));
-                }
-            };
-            await waitForMovie();
-
+            // Movie stream adding - don't await and block the offer
             if (window.movieStreamReady && window.movieStream) {
-                window.movieStream.getTracks().forEach(track => {
-                    peer.addTrack(track, window.movieStream);
-                });
+                 window.movieStream.getTracks().forEach(track => {
+                     peer.addTrack(track, window.movieStream);
+                 });
+            } else {
+                 // Check periodically in background
+                 const checkInterval = setInterval(() => {
+                     if (window.movieStreamReady && window.movieStream && peersRef.current[newUserId]) {
+                         window.movieStream.getTracks().forEach(track => {
+                             peersRef.current[newUserId].addTrack(track, window.movieStream);
+                         });
+                         peersRef.current[newUserId].createOffer(); // Renegotiate
+                         clearInterval(checkInterval);
+                     }
+                 }, 1000);
+                 
+                 // Clear after 10s if never happens to avoid memory leak
+                 setTimeout(() => clearInterval(checkInterval), 10000);
             }
 
             peer.createOffer();
-
-            console.table(
-                peer.pc.getSenders().map(s => ({
-                    kind: s.track?.kind,
-                    hint: s.track?.contentHint
-                }))
-            );
-
             peersRef.current[newUserId] = peer;
         };
 
-        // Handle signals
         const handleSignal = async ({ from, signal }) => {
             let peer = peersRef.current[from];
-            if (!peer) {
-                console.log('Receiving call from', from);
+            
+            if (!peer && signal.type === 'offer') {
+                console.log('Receiving call from unseen user', from);
                 peer = new PeerConnection(from, (track, stream) => {
-                    console.log('Received track from signaling user', from, 'Track:', track.kind, 'Stream ID:', stream.id, 'Tracks in Stream:', stream.getTracks().length);
+                    console.log('Received track from signaling user', from, 'Track:', track.kind, 'Stream ID:', stream.id);
                     setRemoteStreams(prev => {
-                        if (prev[from] && prev[from].id !== stream.id) {
+                        const existing = prev[from];
+                        // Same logic: keep first stream (webcam), ignore subsequent different streams (movie)
+                        if (existing && existing.id !== stream.id) {
                             return prev;
                         }
                         return { ...prev, [from]: stream };
                     });
                 });
+                
                 localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
-
-                const waitForMovie = async () => {
-                    while (!window.movieStreamReady) {
-                        await new Promise(r => setTimeout(r, 100));
-                    }
-                };
-                await waitForMovie();
 
                 if (window.movieStreamReady && window.movieStream) {
                     window.movieStream.getTracks().forEach(track => {
                         peer.addTrack(track, window.movieStream);
                     });
                 }
-
+                
                 peersRef.current[from] = peer;
-
-                setTimeout(() => {
-                    console.table(
-                        peer.pc.getSenders().map(s => ({
-                            kind: s.track?.kind,
-                            hint: s.track?.contentHint
-                        }))
-                    );
-                }, 100);
             }
-            await peer.handleSignal(signal);
+            
+            if (peer) {
+                await peer.handleSignal(signal);
+            }
         };
 
-        // Handle user leaving
         const handleUserLeft = (userId) => {
             if (peersRef.current[userId]) {
                 peersRef.current[userId].close();
@@ -155,23 +165,20 @@ const CallWindow = () => {
         socket.on('signal', handleSignal);
         socket.on('user-left', handleUserLeft);
 
-        // If we just joined, we might need to wait for others to call us OR call existing users?
-        // In this simple mesh, usually the joiner calls everyone or everyone calls the joiner.
-        // My server logic emits 'user-joined' to others. So others will call the joiner.
-        // But the joiner needs to be ready to receive.
-
-        // Also, for existing users in the room when I join:
-        // The server sends 'room-state'. I should probably initiate calls to them?
-        // Or wait for them to call me?
-        // The 'user-joined' event is sent to OTHERS. So OTHERS will call ME.
-        // So I just need to handle incoming signals.
-
         return () => {
             socket.off('user-connected', handleUserConnected);
             socket.off('signal', handleSignal);
             socket.off('user-left', handleUserLeft);
         };
-    }, [localStream, user.id]);
+    }, [localStream, user.id, isJoined]);
+
+    // Clean up on unmount entirely
+    useEffect(() => {
+        return () => {
+             Object.values(peersRef.current).forEach(peer => peer.close());
+             peersRef.current = {};
+        }
+    }, []);
 
     const toggleMute = () => {
         if (localStream) {
@@ -226,11 +233,26 @@ const VideoRenderer = ({ stream }) => {
     useEffect(() => {
         if (videoRef.current && stream) {
             videoRef.current.srcObject = stream;
-            videoRef.current.play().catch(err => console.error("VideoRenderer Autoplay Error:", err));
+            // Ensure audio is not muted for remote streams
+            videoRef.current.muted = false;
+            videoRef.current.volume = 1.0;
+            videoRef.current.play().catch(err => {
+                console.error("VideoRenderer Autoplay Error:", err);
+                // If autoplay with audio fails due to browser policy, try muted first then unmute
+                if (videoRef.current) {
+                    videoRef.current.muted = true;
+                    videoRef.current.play().then(() => {
+                        // Unmute after playback starts (user interaction may be needed)
+                        setTimeout(() => {
+                            if (videoRef.current) videoRef.current.muted = false;
+                        }, 100);
+                    }).catch(e => console.error("VideoRenderer fallback play error:", e));
+                }
+            });
         }
     }, [stream]);
 
-    return <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />;
+    return <video ref={videoRef} autoPlay playsInline muted={false} className="w-full h-full object-cover" />;
 };
 
 export default CallWindow;

@@ -32,33 +32,43 @@ export class PeerConnection {
     }
 
     addTrack(track, stream) {
-        this.pc.addTrack(track, stream);
+        const sender = this.pc.addTrack(track, stream);
 
-        // Apply bitrate and priority encodings post-add depending on the track's contentHint
+        // Apply bitrate and priority encodings to the specific sender just added.
+        // Movie tracks have contentHint set ("detail" for video, "music" for audio).
+        // Webcam tracks have no contentHint — deprioritize them so movie quality stays high.
         setTimeout(() => {
-            this.pc.getSenders().forEach(sender => {
-                if (!sender.track) return;
+            if (!sender.track) return;
 
-                if (sender.track.contentHint === "detail") {
-                    const params = sender.getParameters();
-                    if (!params.encodings) params.encodings = [{}];
+            const params = sender.getParameters();
+            if (!params.encodings) params.encodings = [{}];
 
-                    params.encodings[0].maxBitrate = 8_000_000;
-                    params.encodings[0].priority = "high";
+            const hint = sender.track.contentHint;
+            const kind = sender.track.kind;
 
-                    sender.setParameters(params).catch(e => console.error("RTC Sender Params Error:", e));
-                }
+            if (hint === "detail") {
+                // Movie video — high quality, high priority
+                params.encodings[0].maxBitrate = 8_000_000;
+                params.encodings[0].priority = "high";
+                params.encodings[0].networkPriority = "high";
+            } else if (hint === "music") {
+                // Movie audio — high quality, high priority
+                params.encodings[0].maxBitrate = 512_000;
+                params.encodings[0].priority = "high";
+                params.encodings[0].networkPriority = "high";
+            } else if (kind === "audio") {
+                // Webcam mic — just voice chat, deprioritize heavily
+                params.encodings[0].maxBitrate = 32_000;
+                params.encodings[0].priority = "low";
+                params.encodings[0].networkPriority = "low";
+            } else if (kind === "video") {
+                // Webcam face cam — small thumbnail, deprioritize
+                params.encodings[0].maxBitrate = 500_000;
+                params.encodings[0].priority = "low";
+                params.encodings[0].networkPriority = "low";
+            }
 
-                if (sender.track.contentHint === "music") {
-                    const params = sender.getParameters();
-                    if (!params.encodings) params.encodings = [{}];
-
-                    params.encodings[0].maxBitrate = 512_000;
-                    params.encodings[0].priority = "high";
-
-                    sender.setParameters(params).catch(e => console.error("RTC Sender Params Error:", e));
-                }
-            });
+            sender.setParameters(params).catch(e => console.error("RTC Sender Params Error:", e));
         }, 100);
     }
 
